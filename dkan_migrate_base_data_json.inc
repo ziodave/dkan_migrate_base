@@ -286,7 +286,7 @@ class DataJsonListJSON extends MigrateListJSON {
   }
 
   /**
-   * Retrieves ID from list. 
+   * Retrieves ID from list.
    */
   protected function getIDsFromJSON(array $data) {
     $ids = array();
@@ -317,7 +317,7 @@ class DataJsonItemJSON extends MigrateItemJSON {
   }
 
   /**
-   * Retrieves from itemUrl. 
+   * Retrieves from itemUrl.
    */
   public function getItem($id) {
     // We cache the parsed JSON at $this->data.
