@@ -53,8 +53,13 @@ class MigrateCkanResourceBase extends MigrateCkanBase {
       $list_url = file_create_url($file_name);
     }
 
-    $list_url = $this->endpoint . $list_url;
-    $item_url = $this->endpoint . $item_url;
+    // Add endpoint for local file.
+    if (strpos('http://', $list_url) === TRUE) {
+      $list_url = $this->endpoint . $list_url;
+    }
+    if (strpos('http://', $item_url) !== TRUE) {
+      $item_url = $this->endpoint . $item_url;
+    }
 
     $this->source = new MigrateSourceList(new CKANListJSON($list_url),
           new CKANItemJSON($item_url, $fields), $fields);
