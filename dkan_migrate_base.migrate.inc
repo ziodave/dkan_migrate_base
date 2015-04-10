@@ -23,6 +23,11 @@ function dkan_migrate_base_migrate_api() {
         'group_name' => 'dkan',
         'title' => t('Data.json Dataset Base'),
       ),
+      'datajson_esri_dataset_base' => array(
+        'class_name' => 'MigrateDataJsonESRIBase',
+        'group_name' => 'dkan',
+        'title' => t('ESRI Data.json Base'),
+      ),
       'ckan_dataset_base' => array(
         'class_name' => 'MigrateCkanDatasetBase',
         'group_name' => 'dkan',

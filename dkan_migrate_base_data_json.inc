@@ -8,21 +8,21 @@
 /**
  * Migrate Data.json datasets.
  */
-class MigrateDataJsonDatasetBase extends Migration {
+class MigrateDataJsonDatasetBase extends MigrateDKAN {
   /**
    * Here we go.
    */
   public function __construct($arguments) {
     parent::__construct($arguments);
-    $this->endpoint = isset($arguments['endpoint']) ? $arguments['endpoint'] : 'http://example.com/data.json';
-    $this->version = '1.0';
+    $this->endpoint = isset($arguments['endpoint']) ? $arguments['endpoint'] : 'http://demo.getdkan.com/data.json';
+    $this->version = isset($arguments['version']) ? $arguments['version'] : '1.0';
     $fields = $this->getDataJsonDatasetFields();
 
     $this->highwaterField = array(
       'name' => 'modified',
     );
     $this->source = new MigrateSourceList(new DataJsonListJSON($this->endpoint, array(), $this->version),
-      new DataJsonItemJSON($this->endpoint, array()), $fields);
+      new DataJsonItemJSON($this->endpoint, array(), $this->version), $fields);
 
     $this->map = new MigrateSQLMap(
       $this->machineName,
@@ -37,14 +37,25 @@ class MigrateDataJsonDatasetBase extends Migration {
       MigrateDestinationNode::getKeySchema()
     );
 
+    // These are common to both 1.0 and 1.1
+    $this->addFieldMapping('title', 'title');
+    $this->addFieldMapping('body', 'description');
+    $this->addFieldMapping('og_group_ref', 'publisher');
+    // We process keywords in prepareRow to make sure taxonomy exists.
+    $this->addFieldMapping('field_tags', 'tag_names');
+    // $this->addFieldMapping('field_tags', 'keyword');
+    $this->addFieldMapping('changed', 'modified');
+    $this->addFieldMapping('created', 'issued');
+    $this->addFieldMapping('field_public_access_level', 'accessLevel');
+    // We will add resources separately.
+    // $this->addFieldMapping('field_resources', 'distribution');
+    $this->addFieldMapping('field_public_access_level', 'accessLevel');
+    $this->addFieldMapping('field_contact_name', 'contactPoint');
+    $this->addFieldMapping('field_contact_email', 'mbox');
+    $this->addFieldMapping('uuid', 'identifier');
+    $this->addFieldMapping('field_spatial', 'spatial');
+
     if ($this->version == '1.0') {
-      $this->addFieldMapping('title', 'title');
-      $this->addFieldMapping('body', 'description');
-      $this->addFieldMapping('changed', 'modified');
-      $this->addFieldMapping('field_publisher', 'publisher');
-      $this->addFieldMapping('field_contact_name', 'contactPoint');
-      $this->addFieldMapping('field_contact_email', 'mbox');
-      $this->addFieldMapping('uuid', 'identifier');
       $this->addFieldMapping('field_public_access_level', 'accessLevel');
       $this->addFieldMapping('field_additional_info', 'webService');
       $this->addFieldMapping('field_license', 'license');
@@ -53,14 +64,6 @@ class MigrateDataJsonDatasetBase extends Migration {
       $this->addFieldMapping('field_data_dictionary', 'dataDictionary');
       $this->addFieldMapping('field_frequency', 'accrualPeriodicity');
       $this->addFieldMapping('language', 'language');
-      $this->addFieldMapping('created', 'issued');
-
-      // We process keywords in prepareRow to make sure taxonomy exists.
-      $this->addFieldMapping('field_tags', 'tag_names');
-      // $this->addFieldMapping('field_tags', 'keyword');
-
-      // We will add resources separately.
-      // $this->addFieldMapping('field_resources', 'distribution');
 
       // Part of Open Data Federal Extras module.
       // $this->addFieldMapping('', 'bureauCode');
@@ -79,7 +82,10 @@ class MigrateDataJsonDatasetBase extends Migration {
       // $this->addFieldMapping('', 'format');
     }
     else {
-      // TODO: Add POD 1.1.
+      // POD 1.1.
+      $this->addFieldMapping('field_additional_info:first', 'field_additional_info_key');
+      $this->addFieldMapping('field_additional_info:second', 'field_additional_info_value');
+      // TODO: Licence.
     }
 
     $this->destination = new MigrateDestinationNode('dataset');
@@ -168,17 +174,22 @@ class MigrateDataJsonDatasetBase extends Migration {
    * Implements prepareRow.
    */
   public function prepareRow($row) {
-    if ($this->version == '1.0') {
-      $tags = taxonomy_vocabulary_machine_name_load('tags');
-      if (isset($row->keyword)) {
-        foreach ($row->keyword as $tag) {
-          $this->createTax($tag, 'tags', $tags->vid);
-          $row->tag_names[] = $tag;
-        }
+    $tags = taxonomy_vocabulary_machine_name_load('tags');
+    if (isset($row->keyword)) {
+      foreach ($row->keyword as $tag) {
+        $this->createTax($tag, 'tags', $tags->vid);
+        $row->tag_names[] = $tag;
       }
     }
+    if ($this->version == '1.0') {
+    }
     else {
-      // TODO: POD 1.1.
+      // POD 1.1.
+      $row->publisher = $this->getGroupNidByTitle($row->publisher->name);
+      $row->mbox = str_replace("mailto:", "", $row->contactPoint->hasEmail);
+      $row->contactPoint = $row->contactPoint->fn;
+      $uuid = explode("/", $row->uuid);
+      $row->identifier = array_pop($uuid);
     }
   }
 
@@ -186,64 +197,141 @@ class MigrateDataJsonDatasetBase extends Migration {
    * Implements prepareRow.
    */
   public function prepare($entity, $row) {
-    if ($this->version == '1.0') {
+    if ($row->distribution) {
       $resource_nids = array();
-      if ($row->distribution) {
-        foreach ($row->distribution as $key => $dist) {
-          // Creates a new resource for every linked file.
-          // Linked files contain title, format, and accessURL.
-          global $user;
-          $node = new stdClass();
-          $node->is_new = TRUE;
-          $node->language = 'und';
-          $node->uid = $user->uid;
-          $node->type = 'resource';
-          $node->title = $dist->title;
-          $dist->format = strtolower($dist->format);
-          // TODO: Use this->createTax() to create new tags.
-          $node->field_format = $dist->format;
-          $file = remote_stream_wrapper_file_load_by_uri($dist->accessURL);
-          // Create a link to file for certain formats.
-          if ($dist->format == 'csv' || $dist->format == 'zip') {
-            if (!$file) {
-              $file = remote_stream_wrapper_file_create_by_uri($dist->accessURL);
-              $file->status = FALSE;
-              file_save($file);
-            }
-            $node->field_link_remote_file['und'][0]['fid'] = $file->fid;
-            $node->field_link_remote_file['und'][0]['display'] = 1;
-          }
-          else {
-            // Link to API for all others.
-            $node->field_link_api['und'][0]['url'] = $dist->accessURL;
-          }
-          node_save($node);
-          $resource_nids[] = $node->nid;
-          // Adds the node to the map. This means that when the migration is
-          // rolled back that the resources are removed as well. This adds the
-          // newly created uuids and nids to the migrate_map_data_json table.
-          $this->map->saveIDMapping($node, array($node->nid), 0, 0, '');
-        }
-      }
-      // Link the new resources to the dataset.
-      foreach ($resource_nids as $num => $nid) {
-        $entity->field_resources['und'][$num]['target_id'] = $nid;
+      foreach ($row->distribution as $key => $dist) {
+        $resource_nids[] = $this->createResourceFromDataJson($dist);
       }
     }
+    // Link the new resources to the dataset.
+    foreach ($resource_nids as $num => $nid) {
+      $entity->field_resources['und'][$num]['target_id'] = $nid;
+    }
+    if ($this->version == '1.0') {
+    }
     else {
-      // TODO: POD 1.1.
+      // POD 1.1.
+      // LandPage and WebService go in additional_fields.
+      $add_field_count = 0;
+      if (isset($row->landingPage) && $row->landingPage) {
+        $entity->field_additional_info['und'][$add_field_count]['first'] = t('Landing Page');
+        $entity->field_additional_info['und'][$add_field_count]['second'] = $row->landingPage;
+        $add_field_count++;
+      }
+      if (isset($row->webService) && $row->webService) {
+        $entity->field_additional_info['und'][$add_field_count]['first'] = t('Web Service');
+        $entity->field_additional_info['und'][$add_field_count]['second'] = $row->webService;
+      }
+      // Converts geojson spatial for saving field.
+      if (isset($entity->field_spatial['und'][0]['wkt']) && $spatial = $entity->field_spatial['und'][0]['wkt']) {
+        $spatial = explode(',', $spatial);
+        $count = 0;
+        $point= '';
+        foreach ($spatial as $key => $val) {
+          if ($key && ($key & 1)) {
+            $point = 'POINT (' . implode(" ", array($spatial[$key-1], $spatial[$key])) . ')';
+            geophp_load();
+            $geometry = geoPHP::load($point, 'wkt');
+            $entity->field_spatial['und'][$count] = geofield_get_values_from_geometry($geometry);
+            $count++;
+            $point = '';
+          }
+        }
+      }
     }
   }
 
   /**
-   * Looks up format if exists, if not creates it.
+   * Creates and maps resource from data.json source.
+   *
+   * Dist includes:
+   *  - title
+   *  - format
+   *  - downloadURL (1.1) or accessURL (1.0).
    */
-  public function createTax($name, $vocab_name, $vid) {
-    if (!taxonomy_get_term_by_name($name, $vocab_name, $vid)) {
-      $new_term = new stdClass();
-      $new_term->name = $name;
-      $new_term->vid = $vid;
-      taxonomy_term_save($new_term);
+  public function createResourceFromDataJson($dist) {
+    $resource_url = '';
+    global $user;
+    if (isset($dist->accessURL)) {
+      $resource_url = $dist->accessURL;
+    }
+    elseif (isset($dist->downloadURL)) {
+      $resource_url = $dist->downloadURL;
+    }
+    // Creates a new resource for every linked file.
+    // Linked files contain title, format, and accessURL.
+    $node = new stdClass();
+    $node->is_new = TRUE;
+    $node->language = 'und';
+    $node->uid = $user->uid;
+    $node->type = 'resource';
+    $node->title = $dist->title;
+    $dist->format = strtolower($dist->format);
+    $format = taxonomy_vocabulary_machine_name_load('format');
+    $term = $this->createTax($dist->format, 'format', $format->vid);
+    $node->field_format['und'][0]['tid'] = $term->tid;
+    $response = drupal_http_request($resource_url);
+    if ($response->code == '200') {
+      $file = remote_stream_wrapper_file_load_by_uri($resource_url);
+      // Create a link to file for certain formats.
+      if ($dist->format == 'csv'
+        || $dist->format == 'geojson'
+        || $dist->format == 'kml'
+        || $dist->format == 'zip') {
+        if (!$file) {
+          $file = remote_stream_wrapper_file_create_by_uri($resource_url);
+          $file->status = FALSE;
+          file_save($file);
+        }
+        $node->field_link_remote_file['und'][0]['fid'] = $file->fid;
+        $node->field_link_remote_file['und'][0]['display'] = 1;
+      }
+      else {
+        // Link to API for all others.
+        $node->field_link_api['und'][0]['url'] = $resource_url;
+      }
+    }
+    else {
+      // Link to API if "not found".
+      $node->field_link_api['und'][0]['url'] = $resource_url;
+    }
+    node_save($node);
+    // Adds the node to the map. This means that when the migration is
+    // rolled back that the resources are removed as well. This adds the
+    // newly created uuids and nids to the migrate_map_data_json table.
+    $this->map->saveIDMapping($node, array($node->nid), 0, 0, '');
+    return $node->nid;
+  }
+}
+
+/**
+ * Migrate Data.json datasets.
+ */
+class MigrateDataJsonESRIBase extends MigrateDataJsonDatasetBase {
+  /**
+   * Here we go.
+   */
+  public function __construct($arguments) {
+    $arguments['endpoint'] = 'http://example/data.json';
+    $arguments['version'] = '1.1';
+    parent::__construct($arguments);
+  }
+
+  /**
+   * Implements prepareRow.
+   */
+  public function prepareRow($row) {
+    parent::prepareRow($row);
+    if ($this->version == '1.0') {
+    }
+  }
+
+  /**
+   * Implements prepareRow.
+   */
+  public function prepare($entity, $row) {
+    parent::prepare($entity, $row);
+    if ($this->version == '1.0') {
     }
   }
 }
@@ -274,11 +362,22 @@ class DataJsonListJSON extends MigrateListJSON {
     }
     if ($json) {
       $data = drupal_json_decode($json);
-      foreach ($data as $item) {
-        // Adds resources to count.
-        if (isset($item['distribution'])) {
-          $count++;
-          $count = $count + count($item['distribution']);
+      if ($this->version == '1.1') {
+        foreach ($data['dataset'] as $item) {
+          // Adds resources to count.
+          if (isset($item['distribution'])) {
+            $count++;
+            $count = $count + count($item['distribution']);
+          }
+        }
+      }
+      else {
+        foreach ($data as $item) {
+          // Adds resources to count.
+          if (isset($item['distribution'])) {
+            $count++;
+            $count = $count + count($item['distribution']);
+          }
         }
       }
     }
@@ -297,7 +396,8 @@ class DataJsonListJSON extends MigrateListJSON {
     }
     else {
       foreach ($data['dataset'] as $item) {
-        $ids[] = $item['identifier'];
+        $uuid = explode("\\", $item['identifier']);
+        $ids[] = array_pop($uuid);
       }
     }
     return $ids;
@@ -330,7 +430,7 @@ class DataJsonItemJSON extends MigrateItemJSON {
           }
         }
         else {
-          foreach ($data['dataset'] as $item) {
+          foreach ($data->dataset as $item) {
             $this->data[$item->identifier] = $item;
           }
         }
