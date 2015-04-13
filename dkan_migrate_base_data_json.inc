@@ -15,7 +15,7 @@ class MigrateDataJsonDatasetBase extends MigrateDKAN {
   public function __construct($arguments) {
     parent::__construct($arguments);
     $this->endpoint = isset($arguments['endpoint']) ? $arguments['endpoint'] : 'http://demo.getdkan.com/data.json';
-    $this->version = isset($arguments['version']) ? $arguments['version'] : '1.0';
+    $this->version = isset($arguments['version']) ? $arguments['version'] : '1.1';
     $fields = $this->getDataJsonDatasetFields();
 
     $this->highwaterField = array(
@@ -88,7 +88,7 @@ class MigrateDataJsonDatasetBase extends MigrateDKAN {
       // TODO: Licence.
     }
 
-    $this->destination = new MigrateDestinationNode('dataset');
+    $this->destination = new MigrateDestinationNode('dataset', array('text_format' => 'html'));
   }
 
   /**
@@ -230,9 +230,9 @@ class MigrateDataJsonDatasetBase extends MigrateDKAN {
         foreach ($spatial as $key => $val) {
           if ($key && ($key & 1)) {
             $point = 'POINT (' . implode(" ", array($spatial[$key-1], $spatial[$key])) . ')';
-            geophp_load();
-            $geometry = geoPHP::load($point, 'wkt');
-            $entity->field_spatial['und'][$count] = geofield_get_values_from_geometry($geometry);
+            //geophp_load();
+            //$geometry = geoPHP::load($point, 'wkt');
+            //$entity->field_spatial['und'][$count] = geofield_get_values_from_geometry($geometry);
             $count++;
             $point = '';
           }
@@ -265,7 +265,7 @@ class MigrateDataJsonDatasetBase extends MigrateDKAN {
     $node->language = 'und';
     $node->uid = $user->uid;
     $node->type = 'resource';
-    $node->title = $dist->title;
+    $node->title = isset($dist->title) ? $dist->title : $dist->format;
     $dist->format = strtolower($dist->format);
     $format = taxonomy_vocabulary_machine_name_load('format');
     $term = $this->createTax($dist->format, 'format', $format->vid);
@@ -312,7 +312,7 @@ class MigrateDataJsonESRIBase extends MigrateDataJsonDatasetBase {
    * Here we go.
    */
   public function __construct($arguments) {
-    $arguments['endpoint'] = 'http://example/data.json';
+    $arguments['endpoint'] = 'http://geographicdata.slocity.opendata.arcgis.com/data.json';
     $arguments['version'] = '1.1';
     parent::__construct($arguments);
   }
@@ -381,6 +381,9 @@ class DataJsonListJSON extends MigrateListJSON {
         }
       }
     }
+    $dataset_count = count($data['dataset']);
+    $resource_count = $count - $dataset_count;
+    drupal_set_message(t("%url contains %datasets datasets and %resources resources.", array('%datasets' => $dataset_count, '%url' => $this->listUrl, '%resources' => $resource_count )));
     return $count;
   }
 

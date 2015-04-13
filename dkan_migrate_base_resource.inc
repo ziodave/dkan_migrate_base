@@ -53,6 +53,7 @@ class MigrateCkanResourceBase extends MigrateCkanBase {
         drupal_set_message(t('ckan-migrate-resource_list file downloaded locally. Last updated %date.', array('%date' => $date)));
       }
       $list_url = file_create_url($file_name);
+      $list_url = $file_name;
     }
 
     $item_url = $this->endpoint . $item_url;
