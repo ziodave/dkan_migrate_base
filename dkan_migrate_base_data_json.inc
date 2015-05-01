@@ -16,12 +16,18 @@ class MigrateDataJsonDatasetBase extends MigrateDKAN {
     parent::__construct($arguments);
     $this->endpoint = isset($arguments['endpoint']) ? $arguments['endpoint'] : 'http://demo.getdkan.com/data.json';
     $this->version = isset($arguments['version']) ? $arguments['version'] : '1.1';
+    $this->page = isset($arguments['page']) ? $arguments['page'] : '';
+    $this->offset = isset($arguments['offset']) ? $arguments['offset'] : '';
     $fields = $this->getDataJsonDatasetFields();
 
     $this->highwaterField = array(
       'name' => 'modified',
     );
-    $this->source = new MigrateSourceList(new DataJsonListJSON($this->endpoint, array(), $this->version),
+    $this->source = new MigrateSourceList(new DataJsonListJSON(
+      $this->endpoint,
+      array('page' => $this->page,
+            'offset' => $this->offset),
+      $this->version),
       new DataJsonItemJSON($this->endpoint, array(), $this->version), $fields);
 
     $this->map = new MigrateSQLMap(
@@ -345,6 +351,8 @@ class DataJsonListJSON extends MigrateListJSON {
     parent::__construct($list_url);
     $this->listUrl = $list_url;
     $this->httpOptions = $http_options;
+    $this->page = isset($http_options['page']) ? $http_options['page'] : '';
+    $this->offset = isset($http_options['offset']) ? $http_options['offset'] : '';
     $this->version = $version;
   }
 
@@ -363,11 +371,16 @@ class DataJsonListJSON extends MigrateListJSON {
     if ($json) {
       $data = drupal_json_decode($json);
       if ($this->version == '1.1') {
+        $datasets = 0;
         foreach ($data['dataset'] as $item) {
           // Adds resources to count.
           if (isset($item['distribution'])) {
             $count++;
             $count = $count + count($item['distribution']);
+          }
+          $datasets++;
+          if ($this->page && $datasets >= $this->page) {
+            break;
           }
         }
       }
@@ -381,7 +394,7 @@ class DataJsonListJSON extends MigrateListJSON {
         }
       }
     }
-    $dataset_count = count($data['dataset']);
+    $dataset_count = $this->page ? $this->page : count($data['dataset']);
     $resource_count = $count - $dataset_count;
     drupal_set_message(t("%url contains %datasets datasets and %resources resources.", array('%datasets' => $dataset_count, '%url' => $this->listUrl, '%resources' => $resource_count )));
     return $count;
@@ -398,9 +411,19 @@ class DataJsonListJSON extends MigrateListJSON {
       }
     }
     else {
+      $datasets = 0;
+      $total = $this->page + $this->offset;
       foreach ($data['dataset'] as $item) {
+        if ($datasets < $this->offset) {
+          $datasets++;
+          continue;
+        }
         $uuid = explode("\\", $item['identifier']);
         $ids[] = array_pop($uuid);
+        $datasets++;
+        if ($total && $datasets >= $total) {
+          break;
+        }
       }
     }
     return $ids;
